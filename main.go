@@ -96,7 +96,7 @@ func loadEnvVars() EnvVars {
 		Nseid:                getEnv("NSEID", "a39d49"),
 		LastName:             getEnv("LASTNAME", "Michael"),
 		RoomNumber:           getEnv("ROOMNUMBER", "101"),
-		PropertyID:           getEnv("PROPORTYID", 1234),
+		PropertyID:           getEnv("PROPERTYID", 1234),
 		RegistrationMethodID: getEnv("REGMETHODID", 2),
 		RatePlanID:           getEnv("RATEPLANID", 3),
 	}
