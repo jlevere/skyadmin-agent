@@ -1,0 +1,85 @@
+openapi: 3.0.0
+info:
+  title: splash.skyadmin.io.har Mitmproxy2Swagger
+  version: 1.0.0
+servers:
+  - url: https://skyadmin.io
+    description: The default server
+paths:
+  /api/portals:
+    post:
+      summary: POST portals
+      responses:
+        "200":
+          description: OK
+          content: {}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                vlan:
+                  type: string
+                mac_address:
+                  type: string
+                ip_address:
+                  type: string
+                nseid:
+                  type: string
+  /api/skypms/pinrequired:
+    post:
+      summary: POST pinrequired
+      responses:
+        "200":
+          description: OK
+          content: {}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                property_id:
+                  type: number
+                lastname:
+                  type: string
+                roomnumber:
+                  type: string
+  /api/portalregistrations:
+    post:
+      summary: POST portalregistrations
+      responses:
+        "200":
+          description: OK
+          content: {}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                nseid:
+                  type: string
+                property_id:
+                  type: number
+                vlan_id:
+                  type: number
+                mac_address:
+                  type: string
+                ip_address:
+                  type: string
+                registration_method_id:
+                  type: number
+                rateplan_id:
+                  type: number
+                last_name:
+                  type: string
+                room_number:
+                  type: string
+                pin:
+                  type: string
+x-path-templates:
+  # Remove the ignore: prefix to generate an endpoint with its URL
+  # Lines that are closer to the top take precedence, the matching is greedy
+  []
