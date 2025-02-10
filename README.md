@@ -1,9 +1,64 @@
 # skyadmin-agent
 
 
+*Contents:*
+
+- [Intro](#intro)
+- [Agent](#agent)
+- [Usage](#usage)
+- [Background](#background)
+    - [Problem](#problem)
+    - [HTTP traffic](#http-traffic)
+    - [Registration flow](#registration-flow)
+
+
+
+
+## Intro
+
+This is a golang based application that is designed to navigate [allbridge.com](https://allbridge.com/) splash pages and captive portals.  This is important for automated devices like servers which need to stay authenticated with a network without human interaction.
+
+
+
+## Agent
+
+
+The agent checks for internet connectivity by calling `http://detectportal.firefox.com/success.txt?ipv4` every 30 seconds..  If the agent gets a splash page insted of the actual connection check, then it attempts to first use a type of cached connection, and then attempts to authenticate.
+
+The agent reads its configuration from environmental variables.  The available options are as follows:
+
+```
+LOG_LEVEL=debug
+API_TOKEN=<32 char long hex string>
+VLAN=<int>
+MAC_ADDRESS=<mac without the ':'>
+IP_ADDRESS=<str>
+NSEID=<6 char long hex string>
+LASTNAME=<str>
+ROOMNUMBER=<int>
+PROPERTYID=<int>
+REGMETHODID=<int>
+RATEPLANID=<int>
+```
+
+
+
+
+## Usage
+
+You can run the agent directly with `go run .` but it is better to run in the the docker container.
+
+You can run it with the following command:
+
+`docker run ghcr.io/jlevere/skyadmin-agent:latest`
+
+And example [docker-compose.yml](./docker-compose.yml) is also provided.
+
 ## Background
 
 Skyway is a product of [allbridge.com](https://allbridge.com/) that connects things like proporty managment systems to wifi infrastructure.  The goal of this is to allow people to log into the wifi with their name and room number in a hotel or similar enviroment. The system can do other things as well such as building custom splash pages and general network usage monitoring for customers.
+
+This is similar to, and possibly in conjunction with, a physical device like a Nomadix.
 
 The domain Skyway uses for splash pages is [skyadmin.io](https://skyadmin.io).  It is also used as the interface for things such as customer payment and managment login.
 
@@ -17,12 +72,12 @@ graph TD
     B --> G[Reporting Dashboard]
 ```
 
-## Problem
+### Problem
 
 I find the overall system quite buggy as a user. I am unsure if this is an operator, implmentation or software issue. My experence consists of being randomly forced to reauthenticate with no pattern at all.  Adidtionaly, and maybe most frustratingly, sometimes devices will be "soft kicked" from the network.  They can still interact on wifi, and things like icmp still works fine.  But HTTP requests to some domains will timeout after dns resolution, making it dificult to tell when a device is actually connected or not.  To fix this, you must send a POST request to skyadmin.io with your mac and some other information.  There is no particular pattern to the timing of these "soft kicks" that I have been able to find.
 
 
-## HTTP traffic
+### HTTP traffic
 
 An example of a splash page url is as follows:
 
@@ -248,7 +303,7 @@ And this on a failure:
 ```
 
 
-## Registration flow
+### Registration flow
 
 
 Looking through the code, the registration flow is generally as follows:

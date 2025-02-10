@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  skyportal:
+    build: .
+    restart: unless-stopped
+    environment:
+      - LOG_LEVEL=debug
+      # - API_TOKEN=<32 char long hex string>
+      # - VLAN=<int>
+      # - MAC_ADDRESS=<mac without the ':'>
+      # - IP_ADDRESS=<str>
+      # - NSEID=<6 char long hex string>
+      # - LASTNAME=<str>
+      # - ROOMNUMBER=<int>
+      # - PROPERTYID=<int>
+      # - REGMETHODID=<int>
+      # - RATEPLANID=<int>
