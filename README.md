@@ -87,7 +87,7 @@ https://splash.skyadmin.io/?UI=da4c39&NI=8e39ad3c5f9f&UIP=66.215.127.26&MA=A4CA6
 We can breakdown the url params for a better look at this:
 
 ```
-UI=da4c39
+UI=da4c39           <-  this is the ID (?) of a nomadix machine.
 NI=8e39ad3c5f9f 
 UIP=66.215.127.26
 MA=A4CA6DB82E0A
