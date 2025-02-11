@@ -147,7 +147,7 @@ func loadEnvVars() EnvVars {
 func checkDeviceStatus() (map[string]string, error) {
 	const checkURL = "http://detectportal.firefox.com/success.txt?ipv4"
 	client := resty.New().
-		SetTimeout(10*time.Second).
+		SetTimeout(30*time.Second).
 		SetBaseURL("http://detectportal.firefox.com").
 		SetHeader("User-Agent", DefaultUserAgent)
 
@@ -179,15 +179,8 @@ func checkDeviceStatus() (map[string]string, error) {
 		return nil, fmt.Errorf("failed to parse captive portal URL: %w", err)
 	}
 
-	// Extract API token from response body
-	re := regexp.MustCompile(`E="([A-Za-z0-9]{32})"`)
-	matches := re.FindStringSubmatch(string(resp.Body()))
-	if len(matches) >= 2 {
-		parsedData["api_token"] = matches[1]
-		slog.Debug("Found API token in captive portal response")
-	} else {
-		slog.Warn("No API token found in captive portal response body")
-	}
+	parsedData["api_token"] = extractAPIToken(string(resp.Body()))
+	slog.Debug("Found API token in captive portal response")
 
 	return parsedData, nil
 }
