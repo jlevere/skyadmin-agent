@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -61,6 +60,47 @@ type EnvVars struct {
 	RatePlanID           int
 }
 
+type APIClient struct {
+	client   *resty.Client
+	env      EnvVars
+	apiToken string
+}
+
+const (
+	BaseURL          = "https://skyadmin.io/api"
+	DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:135.0) Gecko/20100101 Firefox/135.0"
+	RequestTimeout   = time.Second * 10
+	RetryCount       = 10
+	RetryWaitTime    = time.Second * 10
+)
+
+func NewAPIClient(env EnvVars) *APIClient {
+	client := resty.New().
+		SetBaseURL(BaseURL).
+		SetHeader("User-Agent", DefaultUserAgent).
+		SetHeader("Accept", "application/json").
+		SetHeader("Content-Type", "application/json").
+		SetTimeout(RequestTimeout).
+		SetRetryCount(RetryCount).
+		SetRetryWaitTime(RetryWaitTime).
+		OnBeforeRequest(func(c *resty.Client, r *resty.Request) error {
+			slog.Debug("Request started", "method", r.Method, "url", r.URL)
+			return nil
+		}).
+		OnAfterResponse(func(c *resty.Client, r *resty.Response) error {
+			if r.IsError() {
+				slog.Error("Request failed", "status", r.Status(), "body", string(r.Body()))
+			}
+			return nil
+		})
+
+	return &APIClient{
+		client:   client,
+		env:      env,
+		apiToken: env.APIToken,
+	}
+}
+
 // Generic getEnv function to retrieve environment variables
 func getEnv[T int | string](key string, fallback T) T {
 	valueStr, ok := os.LookupEnv(key)
@@ -102,33 +142,16 @@ func loadEnvVars() EnvVars {
 	}
 }
 
-// parseCaptivePortalURL extracts query parameters from a captive portal URL.
-func parseCaptivePortalURL(urlStr string) (map[string]string, error) {
-	parsedURL, err := url.Parse(urlStr)
-	if err != nil {
-		return nil, fmt.Errorf("parsing URL %q: %w", urlStr, err)
-	}
-
-	queryParams := parsedURL.Query()
-	data := make(map[string]string)
-	keys := []string{"UI", "NI", "UIP", "MA", "RN", "PORT", "RAD", "PP", "PMS", "SIP", "OS"}
-	for _, key := range keys {
-		if values, ok := queryParams[key]; ok && len(values) > 0 {
-			data[key] = values[0]
-		}
-	}
-
-	return data, nil
-}
-
 // checkDeviceStatus checks if the device is online or behind a captive portal.
 // It only attempts to parse the captive portal URL if its domain is "splash.skyadmin.io".
 func checkDeviceStatus() (map[string]string, error) {
 	const checkURL = "http://detectportal.firefox.com/success.txt?ipv4"
-	client := resty.New().SetTimeout(10 * time.Second)
+	client := resty.New().
+		SetTimeout(10*time.Second).
+		SetBaseURL("http://detectportal.firefox.com").
+		SetHeader("User-Agent", DefaultUserAgent)
 
-	slog.Debug("Checking device status", "url", checkURL)
-	resp, err := client.R().Get(checkURL)
+	resp, err := client.R().Get("/success.txt?ipv4")
 	if err != nil {
 		slog.Error("Failed to check device status", "error", err)
 		return nil, fmt.Errorf("device status check failed: %w", err)
@@ -136,15 +159,11 @@ func checkDeviceStatus() (map[string]string, error) {
 
 	// If we get the expected success response, the device is online.
 	if resp.StatusCode() == http.StatusOK && string(resp.Body()) == "success\n" {
-		slog.Info("Device is online and responding correctly")
+		slog.Debug("Device is online and responding correctly")
 		return nil, nil
 	}
 
-	captiveURL, err := url.Parse(resp.Request.URL)
-	if err != nil {
-		slog.Error("Failed to parse captive portal URL", "error", err)
-		return nil, fmt.Errorf("failed to parse captive portal URL: %w", err)
-	}
+	captiveURL := resp.RawResponse.Request.URL
 
 	// Only proceed if the URL's hostname is "splash.skyadmin.io".
 	if captiveURL.Hostname() != "splash.skyadmin.io" {
@@ -174,103 +193,112 @@ func checkDeviceStatus() (map[string]string, error) {
 }
 
 // checkPortalRegistration attempts to check if the device is already registered.
-func checkPortalRegistration(apiToken, vlan, macAddress, ipAddress, nseid string) (*PortalResponse, error) {
-	const apiURL = "/api/portals"
-	client := resty.New()
+func (a *APIClient) CheckPortalRegistration(portalData map[string]string) (*PortalResponse, error) {
+	req := a.client.R().
+		SetHeader("api-token", a.apiToken).
+		SetBody(map[string]interface{}{
+			"vlan":        portalData["PORT"],
+			"mac_address": portalData["MA"],
+			"ip_address":  portalData["SIP"],
+			"nseid":       portalData["UI"],
+		})
 
-	headers := map[string]string{
-		"api-token": apiToken,
-	}
-	payload := map[string]interface{}{
-		"vlan":        vlan,
-		"mac_address": macAddress,
-		"ip_address":  ipAddress,
-		"nseid":       nseid,
-	}
-
-	slog.Debug("Attempting to login", "url", apiURL, "payload", payload)
-	resp, err := client.R().SetHeaders(headers).SetBody(payload).Post(apiURL)
+	var response PortalResponse
+	resp, err := req.SetResult(&response).Post("/portals")
 	if err != nil {
-		return nil, fmt.Errorf("failed to login: %w", err)
+		return nil, fmt.Errorf("portal check failed: %w", err)
 	}
 
-	var portalResp PortalResponse
-	if err := json.Unmarshal(resp.Body(), &portalResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal portal response: %w", err)
+	if resp.IsError() {
+		return nil, fmt.Errorf("portal check failed with status %d", resp.StatusCode())
 	}
 
-	return &portalResp, nil
+	return &response, nil
 }
 
 // checkPinRequired checks if a PIN is required by the backend.  This also serves to
 // validate that the user exists in the system.
-func checkPinRequired(apiToken, lastName, roomNumber string, property_id int) (bool, error) {
-	const apiURL = "https://skyadmin.io/api/portals"
-	client := resty.New()
+func (a *APIClient) CheckPinRequired(propertyID int) (bool, error) {
+	req := a.client.R().
+		SetHeader("api-token", a.apiToken).
+		SetBody(map[string]interface{}{
+			"property_id": propertyID,
+			"lastname":    a.env.LastName,
+			"roomnumber":  a.env.RoomNumber,
+		})
 
-	headers := map[string]string{
-		"api-token": apiToken,
-	}
-	payload := map[string]interface{}{
-		"property_id": property_id,
-		"lastname":    lastName,
-		"roomnumber":  roomNumber,
-	}
-
-	slog.Debug("Checking if PIN is required", "url", apiURL, "payload", payload)
-	resp, err := client.R().SetHeaders(headers).SetBody(payload).Post(apiURL)
+	var response PinRequiredResponse
+	resp, err := req.SetResult(&response).Post("/skypms/pinrequired")
 	if err != nil {
-		return false, fmt.Errorf("failed to check PIN status: %w", err)
+		return false, fmt.Errorf("pin check failed: %w", err)
 	}
 
-	var pinResp PinRequiredResponse
-	if err := json.Unmarshal(resp.Body(), &pinResp); err != nil {
-		return false, fmt.Errorf("failed to unmarshal PIN response: %w", err)
+	if resp.IsError() {
+		return false, fmt.Errorf("pin check failed with status %d", resp.StatusCode())
 	}
 
-	return pinResp.Data.PinRequired, nil
+	return response.Data.PinRequired, nil
 }
 
-func registerUser(apiToken, lastName, roomNumber, macAddress, ipAddress, nseid string, propertyID, vlanID, registrationMethodID, ratePlanID int) (*RegistrationResponse, error) {
-	const apiURL = "https://skyadmin.io/api/portalregistrations"
-	client := resty.New()
+func (a *APIClient) RegisterDevice(portalData map[string]string, propertyID, vlanID int) (*RegistrationResponse, error) {
 
-	headers := map[string]string{
-		"api-token": apiToken,
-	}
-	payload := map[string]interface{}{
-		"nseid":                  nseid,
-		"property_id":            propertyID,
-		"vlan_id":                vlanID,
-		"mac_address":            macAddress,
-		"ip_address":             ipAddress,
-		"registration_method_id": registrationMethodID,
-		"rateplan_id":            ratePlanID,
-		"last_name":              lastName,
-		"room_number":            roomNumber,
-	}
+	req := a.client.R().
+		SetHeader("api-token", a.apiToken).
+		SetBody(map[string]interface{}{
+			"nseid":                  portalData["UI"],
+			"property_id":            propertyID,
+			"vlan_id":                vlanID,
+			"mac_address":            portalData["MA"],
+			"ip_address":             portalData["SIP"],
+			"registration_method_id": a.env.RegistrationMethodID,
+			"rateplan_id":            a.env.RatePlanID,
+			"last_name":              a.env.LastName,
+			"room_number":            a.env.RoomNumber,
+		})
 
-	slog.Debug("Attempting registration", "url", apiURL, "payload", payload)
-	resp, err := client.R().SetHeaders(headers).SetBody(payload).Post(apiURL)
+	var response RegistrationResponse
+	resp, err := req.SetResult(&response).Post("/portalregistrations")
 	if err != nil {
-		return nil, fmt.Errorf("failed to register: %w", err)
+		return nil, fmt.Errorf("registration failed: %w", err)
 	}
 
-	var registrationResp RegistrationResponse
-	if err := json.Unmarshal(resp.Body(), &registrationResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal registration response: %w", err)
+	if resp.IsError() {
+		return nil, fmt.Errorf("registration failed with status %d", resp.StatusCode())
 	}
 
-	return &registrationResp, nil
+	return &response, nil
 }
 
-func main() {
-	debug := flag.Bool("debug", false, "Enable debug logging")
-	flag.Parse()
+// Parse the url of a captive portal session. Extracts url paramiters
+func parseCaptivePortalURL(urlStr string) (map[string]string, error) {
+	parsedURL, err := url.Parse(urlStr)
+	if err != nil {
+		return nil, fmt.Errorf("parsing URL %q: %w", urlStr, err)
+	}
+
+	data := make(map[string]string)
+	query := parsedURL.Query()
+	for _, key := range []string{"UI", "NI", "UIP", "MA", "RN", "PORT", "RAD", "PP", "PMS", "SIP", "OS"} {
+		if val := query.Get(key); val != "" {
+			data[key] = val
+		}
+	}
+	return data, nil
+}
+
+func extractAPIToken(body string) string {
+	re := regexp.MustCompile(`E="([A-Za-z0-9]{32})"`)
+	if matches := re.FindStringSubmatch(body); len(matches) >= 2 {
+		return matches[1]
+	}
+	return ""
+}
+
+func configureLogging(debug bool) {
 
 	logLevel := os.Getenv("LOG_LEVEL")
 	var level slog.Level
-	if logLevel == "debug" || *debug {
+	if logLevel == "debug" || debug {
 		level = slog.LevelDebug
 	} else {
 		level = slog.LevelInfo
@@ -278,8 +306,17 @@ func main() {
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
 	slog.Info("Starting device monitor", "log_level", level.String())
+}
 
-	envars := loadEnvVars()
+func main() {
+	debug := flag.Bool("debug", false, "Enable debug logging")
+	flag.Parse()
+
+	configureLogging(*debug)
+
+	env := loadEnvVars()
+
+	client := NewAPIClient(env)
 
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -299,33 +336,24 @@ func main() {
 		}
 
 		// Prefer extracted API token over environment variable
-		apiToken := envars.APIToken
 		if dynamicToken, ok := portalData["api_token"]; ok && dynamicToken != "" {
-			apiToken = dynamicToken
+			env.APIToken = dynamicToken
 		}
 
 		slog.Info("Captive portal detected; attempting registration flow", "portalData", portalData)
 
-		vlan := portalData["PORT"]
-		macAddress := portalData["MA"]
-		ipAddress := portalData["SIP"]
-		nseid := portalData["UI"]
-
-		portalResp, err := checkPortalRegistration(apiToken, vlan, macAddress, ipAddress, nseid)
+		portalResp, err := client.CheckPortalRegistration(portalData)
 		if err != nil {
 			slog.Error("Portal registration check failed", "error", err)
 			continue
 		}
-
-		propertyID := portalResp.Data.PropertyID
-		vlanID := portalResp.Data.VlanID
 
 		if portalResp.Data.RegistrationStatus == "Successful" {
 			slog.Info("Device is already authenticated; registration complete")
 			continue
 		}
 
-		pinRequired, err := checkPinRequired(apiToken, envars.LastName, envars.RoomNumber, propertyID)
+		pinRequired, err := client.CheckPinRequired(portalResp.Data.PropertyID)
 		if err != nil {
 			slog.Error("Failed to check if PIN is required", "error", err)
 			continue
@@ -336,18 +364,7 @@ func main() {
 			continue
 		}
 
-		regResp, err := registerUser(
-			apiToken,
-			envars.LastName,
-			envars.RoomNumber,
-			macAddress,
-			ipAddress,
-			nseid,
-			propertyID,
-			vlanID,
-			envars.RegistrationMethodID,
-			envars.RatePlanID,
-		)
+		regResp, err := client.RegisterDevice(portalData, portalResp.Data.PropertyID, portalResp.Data.VlanID)
 		if err != nil {
 			slog.Error("User registration failed", "error", err)
 			continue
