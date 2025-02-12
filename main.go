@@ -178,11 +178,28 @@ func checkDeviceStatus() (map[string]string, error) {
 		slog.Error("Failed to parse captive portal URL", "error", err)
 		return nil, fmt.Errorf("failed to parse captive portal URL: %w", err)
 	}
-
-	parsedData["api_token"] = extractAPIToken(string(resp.Body()))
-	slog.Debug("Found API token in captive portal response")
-
 	return parsedData, nil
+}
+
+// regex the webpack to find the api key to use for subsequent reqests.
+// The path to use for this webpack js comes from the body of the splash page
+func (a *APIClient) GetAPIToken(path string) (string, error) {
+
+	resp, err := a.client.R().Get("/js/app.e360d181.js") //TODO: dont hardcode this
+	if err != nil {
+		return "", fmt.Errorf("portal check failed: %w", err)
+	}
+
+	if resp.IsError() {
+		return "", fmt.Errorf("portal check failed with status %d", resp.StatusCode())
+	}
+
+	api_token := extractAPIToken(string(resp.Body()))
+	if len(api_token) != 0 {
+		slog.Debug("Found API token in captive portal response", "api_token", api_token)
+	}
+
+	return api_token, nil
 }
 
 // checkPortalRegistration attempts to check if the device is already registered.
@@ -315,7 +332,7 @@ func main() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		slog.Info("Checking device status...")
+		slog.Debug("Checking device status...")
 		portalData, err := checkDeviceStatus()
 		if err != nil {
 			slog.Warn("Device check failed, will retry on next cycle", "error", err)
@@ -328,9 +345,14 @@ func main() {
 			continue
 		}
 
+		api_token, err := client.GetAPIToken("")
+		if err != nil {
+			slog.Error("Failed to get updated api token", "error", err)
+		}
+
 		// Prefer extracted API token over environment variable
-		if dynamicToken, ok := portalData["api_token"]; ok && dynamicToken != "" {
-			env.APIToken = dynamicToken
+		if api_token != "" {
+			env.APIToken = api_token
 		}
 
 		slog.Info("Captive portal detected; attempting registration flow", "portalData", portalData)
