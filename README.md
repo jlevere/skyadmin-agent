@@ -391,3 +391,8 @@ or an error
     }
 }
 ```
+
+## TODO features
+
+- Register multiple devices in sequence.  
+- Configurable trigger for registration (cant contact another device, eg, watching a third party device and registering it when it goes down)
