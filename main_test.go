@@ -34,3 +34,61 @@ func TestExtractAPIToken(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractJSPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		html     string
+		expected string
+	}{
+		{
+			name:     "Webpack hash file",
+			html:     `<script src="/js/app.e360d181.js"></script>`,
+			expected: "/js/app.e360d181.js",
+		},
+		{
+			name:     "Different hash",
+			html:     `<script src="/js/app.abc123def.js"></script>`,
+			expected: "/js/app.abc123def.js",
+		},
+		{
+			name:     "Real splash page format",
+			html:     `<script src="/js/app.3e21a4a7.js"></script>`,
+			expected: "/js/app.3e21a4a7.js",
+		},
+		{
+			name:     "Real splash page with preload",
+			html:     `<link href="/js/app.3e21a4a7.js" rel="preload" as="script"><script src="/js/app.3e21a4a7.js"></script>`,
+			expected: "/js/app.3e21a4a7.js",
+		},
+		{
+			name:     "Fallback JS file",
+			html:     `<script src="/js/vendor.min.js"></script>`,
+			expected: "/js/vendor.min.js",
+		},
+		{
+			name:     "Multiple JS files - should get first app file",
+			html:     `<script src="/js/vendor.js"></script><script src="/js/app.e360d181.js"></script>`,
+			expected: "/js/app.e360d181.js",
+		},
+		{
+			name:     "No JS files",
+			html:     `<html><body>No JS here</body></html>`,
+			expected: "",
+		},
+		{
+			name:     "JS file not in /js/ directory",
+			html:     `<script src="/assets/main.js"></script>`,
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractJSPath(tt.html)
+			if result != tt.expected {
+				t.Errorf("extractJSPath() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}

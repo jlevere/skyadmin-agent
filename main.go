@@ -9,6 +9,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -59,6 +60,7 @@ type EnvVars struct {
 	Nseid                string
 	LastName             string
 	RoomNumber           string
+	Pin                  string
 	PropertyID           int
 	RegistrationMethodID int
 	RatePlanID           int
@@ -105,6 +107,11 @@ func NewAPIClient(env EnvVars) *APIClient {
 	}
 }
 
+// UpdateAPIToken updates the API token used by the client
+func (a *APIClient) UpdateAPIToken(token string) {
+	a.apiToken = token
+}
+
 // Generic getEnv function to retrieve environment variables
 func getEnv[T int | string](key string, fallback T) T {
 	valueStr, ok := os.LookupEnv(key)
@@ -140,6 +147,7 @@ func loadEnvVars() EnvVars {
 		Nseid:                getEnv("NSEID", "a39d49"),
 		LastName:             getEnv("LASTNAME", "Michael"),
 		RoomNumber:           getEnv("ROOMNUMBER", "101"),
+		Pin:                  getEnv("PIN", "1234"),
 		PropertyID:           getEnv("PROPERTYID", 1234),
 		RegistrationMethodID: getEnv("REGMETHODID", 2),
 		RatePlanID:           getEnv("RATEPLANID", 3),
@@ -149,7 +157,7 @@ func loadEnvVars() EnvVars {
 // checkDeviceStatus checks if the device is online or behind a captive portal.
 // It only attempts to parse the captive portal URL if its domain is "splash.skyadmin.io".
 func checkDeviceStatus() (map[string]string, error) {
-	const checkURL = "http://detectportal.firefox.com/success.txt?ipv4"
+	const checkURL = "http://detectportal.firefox.com"
 	client := resty.New().
 		SetTimeout(30*time.Second).
 		SetBaseURL(checkURL).
@@ -185,22 +193,44 @@ func checkDeviceStatus() (map[string]string, error) {
 	return parsedData, nil
 }
 
-// regex the webpack to find the api key to use for subsequent reqests.
-// The path to use for this webpack js comes from the body of the splash page
-func (a *APIClient) GetAPIToken(path string) (string, error) {
+// GetAPIToken fetches the splash page and extracts the API token from the webpack JS file
+func (a *APIClient) GetAPIToken(splashURL string) (string, error) {
+	// First, get the splash page to find the JS file path
+	splashClient := resty.New().
+		SetTimeout(30*time.Second).
+		SetBaseURL("https://splash.skyadmin.io").
+		SetHeader("User-Agent", DefaultUserAgent)
 
-	resp, err := a.client.R().Get("/js/app.e360d181.js") //TODO: dont hardcode this
+	splashResp, err := splashClient.R().Get("/")
 	if err != nil {
-		return "", fmt.Errorf("portal check failed: %w", err)
+		return "", fmt.Errorf("failed to fetch splash page: %w", err)
 	}
 
-	if resp.IsError() {
-		return "", fmt.Errorf("portal check failed with status %d", resp.StatusCode())
+	if splashResp.IsError() {
+		return "", fmt.Errorf("splash page request failed with status %d", splashResp.StatusCode())
 	}
 
-	api_token := extractAPIToken(string(resp.Body()))
+	// Extract the JS file path from the HTML
+	jsPath := extractJSPath(string(splashResp.Body()))
+	if jsPath == "" {
+		return "", fmt.Errorf("could not find JS file path in splash page")
+	}
+
+	slog.Debug("Found JS file path", "path", jsPath)
+
+	// Now fetch the JS file to extract the API token
+	jsResp, err := splashClient.R().Get(jsPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch JS file: %w", err)
+	}
+
+	if jsResp.IsError() {
+		return "", fmt.Errorf("JS file request failed with status %d", jsResp.StatusCode())
+	}
+
+	api_token := extractAPIToken(string(jsResp.Body()))
 	if len(api_token) != 0 {
-		slog.Debug("Found API token in captive portal response", "api_token", api_token)
+		slog.Debug("Found API token in JS file", "api_token", api_token)
 	}
 
 	return api_token, nil
@@ -268,6 +298,7 @@ func (a *APIClient) RegisterDevice(portalData map[string]string, propertyID, vla
 			"rateplan_id":            a.env.RatePlanID,
 			"last_name":              a.env.LastName,
 			"room_number":            a.env.RoomNumber,
+			"pin":                    a.env.Pin,
 		})
 
 	var response RegistrationResponse
@@ -302,6 +333,20 @@ func parseCaptivePortalURL(urlStr string) (map[string]string, error) {
 
 func extractAPIToken(body string) string {
 	re := regexp.MustCompile(`E="([A-Za-z0-9]{32})"`)
+	if matches := re.FindStringSubmatch(body); len(matches) >= 2 {
+		return matches[1]
+	}
+	return ""
+}
+
+func extractJSPath(body string) string {
+	// Look for webpack-generated JS files (typically have hash in name)
+	re := regexp.MustCompile(`src="(/js/app\.[a-f0-9]+\.js)"`)
+	if matches := re.FindStringSubmatch(body); len(matches) >= 2 {
+		return matches[1]
+	}
+	// Fallback to any JS file in /js/ directory
+	re = regexp.MustCompile(`src="(/js/[^"]+\.js)"`)
 	if matches := re.FindStringSubmatch(body); len(matches) >= 2 {
 		return matches[1]
 	}
@@ -345,7 +390,12 @@ func main() {
 		slog.Debug("Checking device status...")
 		portalData, err := checkDeviceStatus()
 		if err != nil {
-			slog.Warn("Device check failed, will retry on next cycle", "error", err)
+			// Check if this is a DNS resolution error
+			if strings.Contains(err.Error(), "lookup") || strings.Contains(err.Error(), "dial tcp") {
+				slog.Warn("Network connectivity issue detected, will retry on next cycle", "error", err)
+			} else {
+				slog.Warn("Device check failed, will retry on next cycle", "error", err)
+			}
 			continue
 		}
 
@@ -358,11 +408,12 @@ func main() {
 		api_token, err := client.GetAPIToken("")
 		if err != nil {
 			slog.Error("Failed to get updated api token", "error", err)
-		}
-
-		// Prefer extracted API token over environment variable
-		if api_token != "" {
+			// Continue with existing token instead of failing
+		} else if api_token != "" {
+			// Update both the env and the client with the new token
 			env.APIToken = api_token
+			client.UpdateAPIToken(api_token)
+			slog.Debug("Updated API token", "token", api_token)
 		}
 
 		slog.Info("Captive portal detected; attempting registration flow", "portalData", portalData)
