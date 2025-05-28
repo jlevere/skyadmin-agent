@@ -1,0 +1,111 @@
+name: Package and Publish Helm Chart
+
+on:
+  push:
+    tags:
+      - "v*"
+    paths:
+      - "helm/**"
+  workflow_dispatch:
+
+env:
+  CHART_NAME: skyadmin-agent
+
+jobs:
+  package-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "3.13.0"
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+            echo "VERSION=$VERSION" >> $GITHUB_ENV
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "Using version from tag: $VERSION"
+          else
+            echo "No tag found, using existing appVersion"
+            VERSION=$(grep 'appVersion:' helm/Chart.yaml | sed 's/.*"\(.*\)".*/\1/')
+            echo "VERSION=$VERSION" >> $GITHUB_ENV
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update Chart.yaml version and appVersion
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            echo "Updating version and appVersion to: $VERSION"
+            sed -i "s/^version:.*/version: \"$VERSION\"/" helm/Chart.yaml
+            sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" helm/Chart.yaml
+            echo "Updated Chart.yaml:"
+            cat helm/Chart.yaml
+          else
+            echo "Not a tag build, keeping existing version and appVersion"
+          fi
+
+      - name: Lint Helm Chart
+        run: helm lint helm/
+
+      - name: Package Helm Chart
+        run: |
+          mkdir -p charts
+          helm package helm/ -d charts/
+
+          # Create or update the index
+          if [ -f charts/index.yaml ]; then
+            helm repo index charts/ --url https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/charts --merge charts/index.yaml
+          else
+            helm repo index charts/ --url https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/charts
+          fi
+
+          echo "Generated charts:"
+          ls -la charts/
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./charts
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Summary
+        run: |
+          echo "## Helm Chart Published! " >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Your Helm chart has been packaged and published to GitHub Pages." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Chart Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Chart Name**: $CHART_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: $VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "- **App Version**: $VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository URL**: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/charts" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Usage" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "helm repo add $CHART_NAME https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/charts" >> $GITHUB_STEP_SUMMARY
+          echo "helm repo update" >> $GITHUB_STEP_SUMMARY
+          echo "helm install my-$CHART_NAME $CHART_NAME/$CHART_NAME" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

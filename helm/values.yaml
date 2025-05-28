@@ -1,0 +1,76 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/jlevere/skyadmin-agent
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# This section builds out the service account more information can be found here: https://kubernetes.io/docs/concepts/security/service-accounts/
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Automatically mount a ServiceAccount's API credentials?
+  automount: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+# This is for setting Kubernetes Annotations to a Pod.
+# For more information checkout: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/
+podAnnotations: {}
+# This is for setting Kubernetes Labels to a Pod.
+# For more information checkout: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/
+podLabels: {}
+
+podSecurityContext: {}
+
+securityContext: {}
+
+# Application configuration
+# Environment variables required by the skyadmin-agent
+config:
+  # SkyAdmin API configuration
+  apiToken: "b2507058a2c145d60c6d919c0347fe9c"
+
+  # Network configuration
+  vlan: "3300"
+  macAddress: "D4CA6DA65E0E"
+  ipAddress: "10.0.24.21"
+  nseid: "a39d49"
+
+  # Guest registration details
+  lastName: "Michael"
+  roomNumber: "101"
+
+  # Backend IDs
+  propertyId: 1234
+  registrationMethodId: 2
+  ratePlanId: 3
+
+  # Logging configuration
+  logLevel: "info" # debug, info, warn, error
+
+resources: {}
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+
+volumes: []
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Additional environment variables (beyond the config section above)
+env: []
