@@ -19,7 +19,7 @@
 
     devShells.x86_64-linux.default = pkgs.mkShell {
       hardeningDisable = ["fortify"];
-      packages = with pkgs; [go gotools golangci-lint];
+      packages = with pkgs; [go gotools golangci-lint go-task];
     };
   };
 }
