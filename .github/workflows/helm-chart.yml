@@ -71,9 +71,9 @@ jobs:
 
           # Create or update the index
           if [ -f charts/index.yaml ]; then
-            helm repo index charts/ --url https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/charts --merge charts/index.yaml
+            helm repo index charts/ --url https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }} --merge charts/index.yaml
           else
-            helm repo index charts/ --url https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/charts
+            helm repo index charts/ --url https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
           fi
 
           echo "Generated charts:"
@@ -103,11 +103,11 @@ jobs:
           echo "- **Chart Name**: $CHART_NAME" >> $GITHUB_STEP_SUMMARY
           echo "- **Version**: $VERSION" >> $GITHUB_STEP_SUMMARY
           echo "- **App Version**: $VERSION" >> $GITHUB_STEP_SUMMARY
-          echo "- **Repository URL**: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/charts" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository URL**: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Usage" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "helm repo add $CHART_NAME https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/charts" >> $GITHUB_STEP_SUMMARY
+          echo "helm repo add $CHART_NAME https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}" >> $GITHUB_STEP_SUMMARY
           echo "helm repo update" >> $GITHUB_STEP_SUMMARY
           echo "helm install my-$CHART_NAME $CHART_NAME/$CHART_NAME" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
