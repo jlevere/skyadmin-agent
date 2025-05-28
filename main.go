@@ -14,6 +14,10 @@ import (
 	"github.com/go-resty/resty/v2"
 )
 
+// version can be set at build time using ldflags
+// Example: go build -ldflags "-X main.version=v1.0.0"
+var version = "dev"
+
 type RegistrationResponse struct {
 	Status string `json:"registration_status"`
 	URL    string `json:"url"`
@@ -148,7 +152,7 @@ func checkDeviceStatus() (map[string]string, error) {
 	const checkURL = "http://detectportal.firefox.com/success.txt?ipv4"
 	client := resty.New().
 		SetTimeout(30*time.Second).
-		SetBaseURL("http://detectportal.firefox.com").
+		SetBaseURL(checkURL).
 		SetHeader("User-Agent", DefaultUserAgent)
 
 	resp, err := client.R().Get("/success.txt?ipv4")
@@ -315,12 +319,18 @@ func configureLogging(debug bool) {
 	}
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
-	slog.Info("Starting device monitor", "log_level", level.String())
+	slog.Info("Starting skyadmin-agent", "version", version, "log_level", level.String())
 }
 
 func main() {
 	debug := flag.Bool("debug", false, "Enable debug logging")
+	showVersion := flag.Bool("version", false, "Show version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("skyadmin-agent version %s\n", version)
+		os.Exit(0)
+	}
 
 	configureLogging(*debug)
 

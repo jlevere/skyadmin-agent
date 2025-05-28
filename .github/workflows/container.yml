@@ -5,6 +5,8 @@ on:
     paths:
       - "main.go"
       - "Dockerfile"
+    tags:
+      - "v*"
   workflow_dispatch:
 
 env:
@@ -21,11 +23,22 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Generate variables
         id: vars
         run: |
           echo "DATE=$(date +%Y-%m-%d)" >> $GITHUB_ENV
+
+          # Extract version from git tag or use 'dev' for non-tag builds
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION="dev-$(git rev-parse --short HEAD)"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
@@ -42,9 +55,11 @@ jobs:
 
       - name: Build and Push Docker Image
         run: |
+          # Build image with version information embedded via ldflags
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
-            --tag $IMAGE_NAME:$DATE \
+            --build-arg VERSION=$VERSION \
+            --tag $IMAGE_NAME:$VERSION \
             --tag $IMAGE_NAME:latest \
             --push \
             .
